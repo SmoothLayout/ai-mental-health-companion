@@ -6,7 +6,7 @@ import {
   ReactNode,
 } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { User, Session } from '@supabase/supabase-js';
+import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthResult {
   error: Error | null;
@@ -32,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
 
+    // Get the existing session when the application starts.
     const initializeAuth = async () => {
       try {
         const {
@@ -39,16 +40,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error,
         } = await supabase.auth.getSession();
 
-        if (!mounted) return;
-
         if (error) {
           console.error('Supabase session error:', error);
-          setSession(null);
-          setUser(null);
-        } else {
-          setSession(session);
-          setUser(session?.user ?? null);
         }
+
+        if (!mounted) return;
+
+        setSession(session);
+        setUser(session?.user ?? null);
       } catch (error) {
         console.error('Failed to initialize authentication:', error);
 
@@ -65,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initializeAuth();
 
+    // Listen for future authentication changes.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -85,7 +85,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string
   ): Promise<AuthResult> => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
@@ -99,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return {
         error: null,
-        session: data.session ?? null,
+        session: session ?? null,
       };
     } catch (error) {
       console.error('Sign-in error:', error);
@@ -119,12 +122,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string
   ): Promise<AuthResult> => {
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/login`,
-        },
       });
 
       if (error) {
@@ -136,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       return {
         error: null,
-        session: data.session ?? null,
+        session: session ?? null,
       };
     } catch (error) {
       console.error('Sign-up error:', error);
@@ -158,11 +161,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (error) {
         console.error('Sign-out error:', error);
       }
-
-      setSession(null);
-      setUser(null);
     } catch (error) {
-      console.error('Sign-out error:', error);
+      console.error('Unexpected sign-out error:', error);
     }
   };
 
@@ -185,7 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
 
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
 
