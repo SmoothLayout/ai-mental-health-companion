@@ -8,28 +8,18 @@ import {
 import { supabase } from '@/integrations/supabase/client';
 import { User, Session } from '@supabase/supabase-js';
 
+interface AuthResult {
+  error: Error | null;
+  session: Session | null;
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signIn: (
-    email: string,
-    password: string
-  ) => Promise<{
-    error: Error | null;
-    session: Session | null;
-  }>;
-  signUp: (
-    email: string,
-    password: string
-  ) => Promise<{
-    error: Error | null;
-    session: Session | null;
-    needsConfirmation: boolean;
-  }>;
-  signOut: () => Promise<{ error: Error | null }>;
-  resetPassword: (email: string) => Promise<{ error: Error | null }>;
-  updatePassword: (password: string) => Promise<{ error: Error | null }>;
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  signUp: (email: string, password: string) => Promise<AuthResult>;
+  signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -49,16 +39,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           error,
         } = await supabase.auth.getSession();
 
-        if (error) {
-          console.error('Failed to get session:', error);
-        }
-
         if (!mounted) return;
 
-        setSession(session);
-        setUser(session?.user ?? null);
+        if (error) {
+          console.error('Supabase session error:', error);
+          setSession(null);
+          setUser(null);
+        } else {
+          setSession(session);
+          setUser(session?.user ?? null);
+        }
       } catch (error) {
-        console.error('Authentication initialization error:', error);
+        console.error('Failed to initialize authentication:', error);
 
         if (mounted) {
           setSession(null);
@@ -75,10 +67,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
-
-      console.log('Auth state changed:', event);
 
       setSession(session);
       setUser(session?.user ?? null);
@@ -90,10 +80,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  /**
-   * SIGN IN
-   */
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (
+    email: string,
+    password: string
+  ): Promise<AuthResult> => {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
@@ -112,6 +102,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session: data.session ?? null,
       };
     } catch (error) {
+      console.error('Sign-in error:', error);
+
       return {
         error:
           error instanceof Error
@@ -122,138 +114,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  /**
-   * SIGN UP
-   */
-  const signUp = async (email: string, password: string) => {
+  const signUp = async (
+    email: string,
+    password: string
+  ): Promise<AuthResult> => {
     try {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/login`,
+        },
       });
 
       if (error) {
         return {
           error: new Error(error.message),
           session: null,
-          needsConfirmation: false,
         };
       }
-
-      /*
-       * When email confirmation is enabled by Supabase,
-       * data.session will normally be null.
-       */
-      const needsConfirmation =
-        !!data.user && !data.session;
 
       return {
         error: null,
         session: data.session ?? null,
-        needsConfirmation,
       };
     } catch (error) {
+      console.error('Sign-up error:', error);
+
       return {
         error:
           error instanceof Error
             ? error
             : new Error('Unable to create your account. Please try again.'),
         session: null,
-        needsConfirmation: false,
       };
     }
   };
 
-  /**
-   * SIGN OUT
-   */
-  const signOut = async () => {
+  const signOut = async (): Promise<void> => {
     try {
       const { error } = await supabase.auth.signOut();
 
       if (error) {
-        return {
-          error: new Error(error.message),
-        };
+        console.error('Sign-out error:', error);
       }
 
-      setUser(null);
       setSession(null);
-
-      return {
-        error: null,
-      };
+      setUser(null);
     } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? error
-            : new Error('Unable to sign out. Please try again.'),
-      };
-    }
-  };
-
-  /**
-   * SEND PASSWORD RESET EMAIL
-   */
-  const resetPassword = async (email: string) => {
-    try {
-      const redirectUrl = `${window.location.origin}/reset-password`;
-
-      const { error } =
-        await supabase.auth.resetPasswordForEmail(
-          email.trim().toLowerCase(),
-          {
-            redirectTo: redirectUrl,
-          }
-        );
-
-      if (error) {
-        return {
-          error: new Error(error.message),
-        };
-      }
-
-      return {
-        error: null,
-      };
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? error
-            : new Error(
-                'Unable to send the password reset email. Please try again.'
-              ),
-      };
-    }
-  };
-
-  /**
-   * UPDATE PASSWORD
-   */
-  const updatePassword = async (password: string) => {
-    try {
-      const { error } = await supabase.auth.updateUser({
-        password,
-      });
-
-      if (error) {
-        return {
-          error: new Error(error.message),
-        };
-      }
-
-      return {
-        error: null,
-      };
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error
-            ? error
-            : new Error('Unable to update your password. Please try again.'),
-      };
+      console.error('Sign-out error:', error);
     }
   };
 
@@ -266,8 +175,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signIn,
         signUp,
         signOut,
-        resetPassword,
-        updatePassword,
       }}
     >
       {children}
@@ -278,10 +185,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
 
-  if (!context) {
-    throw new Error(
-      'useAuth must be used within an AuthProvider'
-    );
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
   }
 
   return context;
